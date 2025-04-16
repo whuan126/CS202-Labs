@@ -134,7 +134,7 @@ int             strncmp(const char*, const char*, uint);
 char*           strncpy(char*, const char*, int);
 
 // syscall.c
-void            argint(int, int*);
+int            argint(int, int*);
 int             argstr(int, char*, int);
 void            argaddr(int, uint64 *);
 int             fetchstr(uint64, char*, int);
@@ -147,6 +147,11 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+
+// Lab 1 sysinfo
+uint64          sys_sysinfo(void);
+// int             argint(int n, int *ip);
+extern uint     sys_call_count; // Lab 1 global counter for system calls
 
 // uart.c
 void            uartinit(void);

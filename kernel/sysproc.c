@@ -5,6 +5,64 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "syscall.h"
+
+uint sys_call_count = 0;
+
+struct run {
+  struct run *next;
+};
+
+// External declaration for the mem_alloc data
+extern struct {
+  struct spinlock lock;
+  struct run *freelist;
+} kmem;
+
+uint64
+sys_sysinfo(void) {
+  int param;
+  if(argint(0, &param) < 0)
+    return -1;
+
+  uint ret = -1;
+  struct proc *p;
+  
+  switch(param) {
+  case 0: {
+      // Count active processes
+      int active = 0;
+      for(p = proc; p < &proc[NPROC]; p++){
+          acquire(&p->lock);
+          if(p->state != UNUSED)
+              active++;
+          release(&p->lock);
+      }
+      ret = active;
+      break;
+  }
+  case 1: {
+      //  System call count excluding the current sys_sysinfo call
+      ret = sys_call_count - 1;
+      break;
+  }
+  case 2: {
+      // Count free memory pages
+      int free_pages = 0;
+      struct run *r;
+      acquire(&kmem.lock);
+      for(r = kmem.freelist; r; r = r->next)
+          free_pages++;
+      release(&kmem.lock);
+      ret = free_pages;
+      break;
+  }
+  default:
+      ret = -1;
+      break;
+  }
+  return ret;
+}
 
 uint64
 sys_exit(void)
