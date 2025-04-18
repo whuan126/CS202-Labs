@@ -37,3 +37,4 @@ entry("sbrk");
 entry("sleep");
 entry("uptime");
 entry("sysinfo"); # Lab 1 sysinfo
+entry("procinfo");
