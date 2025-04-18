@@ -147,3 +147,22 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+// Lab 1 procinfo
+uint64
+sys_procinfo(void)
+{
+    uint64 addr;
+    argaddr(0, &addr);            // just fetch the user pointer
+
+    struct proc *p = myproc();
+    struct pinfo info;
+    info.ppid          = p->parent ? p->parent->pid : -1;
+    info.syscall_count = p->syscall_count;
+    info.page_usage    = (p->sz + PGSIZE - 1) / PGSIZE;
+
+    // copyout returns < 0 if the user address is invalid
+    if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+        return -1;
+
+    return 0;
+}
