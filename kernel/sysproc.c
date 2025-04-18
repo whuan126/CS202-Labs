@@ -157,7 +157,7 @@ sys_procinfo(void)
     struct proc *p = myproc();
     struct pinfo info;
     info.ppid          = p->parent ? p->parent->pid : -1;
-    info.syscall_count = p->syscall_count;
+    info.syscall_count = p->syscall_count - 1;
     info.page_usage    = (p->sz + PGSIZE - 1) / PGSIZE;
 
     // copyout returns < 0 if the user address is invalid

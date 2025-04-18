@@ -65,7 +65,9 @@ usertrap(void)
     intr_on();
 
     // Lab 1 sysinfo, increment global call counts
-    sys_call_count++;
+    //sys_call_count++;
+    
+
 
     syscall();
   } else if((which_dev = devintr()) != 0){
