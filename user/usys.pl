@@ -38,3 +38,5 @@ entry("sleep");
 entry("uptime");
 entry("sysinfo"); # Lab 1 sysinfo
 entry("procinfo"); # Lab 1 procinfo
+entry("sched_statistics");
+entry("sched_tickets");

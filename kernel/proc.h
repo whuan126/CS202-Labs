@@ -111,6 +111,10 @@ struct proc {
   struct inode *cwd;           // Current directory
   int syscall_count;           // syscall count
   char name[16];               // Process name (debugging)
+  int proc_tickets;
+  int proc_scheduled;
+  int proc_stride;
+  int proc_pass;
 };
 
 extern struct proc proc[NPROC];
