@@ -589,6 +589,7 @@ scheduler(void)
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
+        p->proc_scheduled++;
         c->proc = p;
         swtch(&c->context, &p->context);
 
