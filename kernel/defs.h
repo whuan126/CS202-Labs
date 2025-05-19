@@ -106,7 +106,10 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
-
+void            print_hello(int);
+int            set_tickets_to_proc(int);           // function declaration of set tickets to process
+void            print_sched_statistics(void);      // function declaration of sched_statistics
+unsigned short  rand(void);                        // function declaration of ranndom integer returning fucntion
 // swtch.S
 void            swtch(struct context*, struct context*);
 

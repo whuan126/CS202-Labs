@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 
+
 uint64
 sys_exit(void)
 {
@@ -89,3 +90,45 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+uint64 sys_hello(void)
+{
+  int n;
+  argint(0, &n);
+  print_hello(n);
+  return 0;
+}
+uint64
+sys_procinfo(void)
+{
+    uint64 addr;
+    argaddr(0, &addr);            // just fetch the user pointer
+
+    struct proc *p = myproc();
+    struct pinfo info;
+    info.ppid          = p->parent ? p->parent->pid : -1;
+    info.syscall_count = p->syscall_count;
+    info.page_usage    = (p->sz + PGSIZE - 1) / PGSIZE;
+
+    // copyout returns < 0 if the user address is invalid
+    if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+        return -1;
+
+    return 0;
+}
+uint64
+sys_sched_tickets(void)
+{
+  int n;
+  argint(0,&n);         //n is the inout parameter from user level, here it is number of tickets for that process
+  return set_tickets_to_proc(n);
+}
+
+//syscall sched_statistics to print pid, name, tickets and ticks of the process
+//this function returns int 0
+uint64
+sys_sched_statistics(void)
+{
+  print_sched_statistics();
+  return 0;
+}
+
