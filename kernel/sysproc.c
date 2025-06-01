@@ -8,58 +8,68 @@
 #include "syscall.h"
 
 uint sys_call_count = 0;
-
-struct run {
+extern int total_tickets;
+extern int stride_constant_K;
+struct run
+{
   struct run *next;
 };
 
 // External declaration for the mem_alloc data
-extern struct {
+extern struct
+{
   struct spinlock lock;
   struct run *freelist;
 } kmem;
+extern struct proc proc[NPROC];
 
 uint64
-sys_sysinfo(void) {
+sys_sysinfo(void)
+{
   int param;
-  if(argint(0, &param) < 0)
+  if (argint(0, &param) < 0)
     return -1;
 
   uint ret = -1;
   struct proc *p;
-  
-  switch(param) {
-  case 0: {
-      // Count active processes
-      int active = 0;
-      for(p = proc; p < &proc[NPROC]; p++){
-          acquire(&p->lock);
-          if(p->state != UNUSED)
-              active++;
-          release(&p->lock);
-      }
-      ret = active;
-      break;
+
+  switch (param)
+  {
+  case 0:
+  {
+    // Count active processes
+    int active = 0;
+    for (p = proc; p < &proc[NPROC]; p++)
+    {
+      acquire(&p->lock);
+      if (p->state != UNUSED)
+        active++;
+      release(&p->lock);
+    }
+    ret = active;
+    break;
   }
-  case 1: {
-      //  System call count excluding the current sys_sysinfo call
-      ret = sys_call_count - 1;
-      break;
+  case 1:
+  {
+    //  System call count excluding the current sys_sysinfo call
+    ret = sys_call_count - 1;
+    break;
   }
-  case 2: {
-      // Count free memory pages
-      int free_pages = 0;
-      struct run *r;
-      acquire(&kmem.lock);
-      for(r = kmem.freelist; r; r = r->next)
-          free_pages++;
-      release(&kmem.lock);
-      ret = free_pages;
-      break;
+  case 2:
+  {
+    // Count free memory pages
+    int free_pages = 0;
+    struct run *r;
+    acquire(&kmem.lock);
+    for (r = kmem.freelist; r; r = r->next)
+      free_pages++;
+    release(&kmem.lock);
+    ret = free_pages;
+    break;
   }
   default:
-      ret = -1;
-      break;
+    ret = -1;
+    break;
   }
   return ret;
 }
@@ -70,7 +80,7 @@ sys_exit(void)
   int n;
   argint(0, &n);
   exit(n);
-  return 0;  // not reached
+  return 0; // not reached
 }
 
 uint64
@@ -101,7 +111,7 @@ sys_sbrk(void)
 
   argint(0, &n);
   addr = myproc()->sz;
-  if(growproc(n) < 0)
+  if (growproc(n) < 0)
     return -1;
   return addr;
 }
@@ -115,8 +125,10 @@ sys_sleep(void)
   argint(0, &n);
   acquire(&tickslock);
   ticks0 = ticks;
-  while(ticks - ticks0 < n){
-    if(killed(myproc())){
+  while (ticks - ticks0 < n)
+  {
+    if (killed(myproc()))
+    {
       release(&tickslock);
       return -1;
     }
@@ -151,18 +163,50 @@ sys_uptime(void)
 uint64
 sys_procinfo(void)
 {
-    uint64 addr;
-    argaddr(0, &addr);            // just fetch the user pointer
+  uint64 addr;
+  argaddr(0, &addr); // just fetch the user pointer
 
-    struct proc *p = myproc();
-    struct pinfo info;
-    info.ppid          = p->parent ? p->parent->pid : -1;
-    info.syscall_count = p->syscall_count - 1;
-    info.page_usage    = (p->sz + PGSIZE - 1) / PGSIZE;
+  struct proc *p = myproc();
+  struct pinfo info;
+  info.ppid = p->parent ? p->parent->pid : -1;
+  info.syscall_count = p->syscall_count - 1;
+  info.page_usage = (p->sz + PGSIZE - 1) / PGSIZE;
 
-    // copyout returns < 0 if the user address is invalid
-    if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-        return -1;
+  // copyout returns < 0 if the user address is invalid
+  if (copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
 
-    return 0;
+  return 0;
+}
+
+uint64 sys_sched_statistics(void)
+{
+  //printing the scheduling statistics for a process
+  struct proc *p ;
+  for(p=proc; p<&proc[NPROC]; p++){
+    if(p->pid!=0){
+      printf("%d(%s): tickets: %d, ticks: %d \n", p->pid,p->name,p->proc_tickets,p->proc_scheduled);
+    }
+  }
+  return 0;
+}
+
+uint64
+sys_sched_tickets(void)
+{
+  // printf("Running sched tickets");
+  int tickets;
+  if(argint(0, &tickets) < 0)
+    return -1;
+
+  if(tickets > 10000)
+    tickets = 10000;
+
+  struct proc *p = myproc();
+  p->proc_tickets = tickets;
+  p->proc_stride = stride_constant_K/p->proc_tickets;
+  p->proc_pass = p->proc_stride;
+  total_tickets+=tickets;
+
+  return 0;
 }

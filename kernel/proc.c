@@ -26,6 +26,11 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+unsigned short lfsr = 0xACE1u;
+unsigned short bit;
+int total_tickets = 0;
+int stride_constant_K = 10000;
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -146,7 +151,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
   p->syscall_count = 0; // Lab 1 procinfo
-
+  p->proc_tickets = 10;
+  p->proc_scheduled = 0;
+  p->proc_pass = 0;
+  p->proc_stride = 0;
   return p;
 }
 
@@ -435,6 +443,13 @@ wait(uint64 addr)
   }
 }
 
+
+unsigned short rand()
+{
+bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1;
+return lfsr = (lfsr >> 1) | (bit << 15);
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -447,8 +462,122 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
+  printf("Running the scheduluer");
   c->proc = 0;
+  #if defined(LOTTERY)
+  printf("----------- RUNNING THE LOTTERY SCHEDULER -------------\n");
+
+  for (;;) {
+    intr_on();
+
+    int total = 0;
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE)
+        total += p->proc_tickets;
+      release(&p->lock);
+    }
+
+  if (total == 0) {
+    // Fall back to round-robin
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        p->state = RUNNING;
+        p->proc_scheduled++;
+        c->proc = p;
+        swtch(&c->context, &p->context);
+        c->proc = 0;
+        release(&p->lock);
+        break;
+      }
+      release(&p->lock);
+    }
+    continue;
+  }
+
+    int winning_ticket = rand() % total;
+    // printf("Winning ticket is %d\n", winning_ticket);
+
+    int count = 0;
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        count += p->proc_tickets;
+        if (count > winning_ticket) {
+          // printf("Scheduled ticket %s \n",p->name);
+          p->state = RUNNING;
+          p->proc_scheduled++;
+          c->proc = p;
+          swtch(&c->context, &p->context);
+          c->proc = 0;
+          release(&p->lock);
+          break;
+        }
+      }
+      release(&p->lock);
+    }
+}
+
+  #elif defined(STRIDE)
+  printf("Running the stride scheduler\n");
+  for(;;){
+    intr_on();
+
+     int total = 0;
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE)
+        total += p->proc_tickets;
+      release(&p->lock);
+    }
+
+    if (total == 0) {
+      // printf("Shifting to round robin by default \n");
+      // Fall back to round-robin
+      for (p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE) {
+          p->state = RUNNING;
+          p->proc_scheduled++;
+          c->proc = p;
+          swtch(&c->context, &p->context);
+          c->proc = 0;
+          release(&p->lock);
+          break;
+        }
+        release(&p->lock);
+      }
+      continue;
+    }
+
+    struct proc *min_proc = 0;
+    int temp_pass = __INT_MAX__;
+    
+    for(p=proc; p<&proc[NPROC]; p++){
+      acquire(&p->lock);
+
+      if(p->state == RUNNABLE && p->proc_pass<temp_pass){
+        temp_pass = p->proc_pass;
+        min_proc = p;
+      }
+      release(&p->lock);
+    }
+    if(min_proc){
+    acquire(&min_proc->lock);
+    min_proc->state = RUNNING;
+    min_proc->proc_scheduled++;
+    min_proc->proc_pass+= min_proc->proc_stride;
+    c->proc = min_proc;
+    swtch(&c->context, &min_proc->context);
+    c->proc = 0;
+    release(&min_proc->lock);
+    }
+  }
+
+
+  #else
+  printf("Running round robin by default \n");
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
@@ -460,6 +589,7 @@ scheduler(void)
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
+        p->proc_scheduled++;
         c->proc = p;
         swtch(&c->context, &p->context);
 
@@ -470,6 +600,7 @@ scheduler(void)
       release(&p->lock);
     }
   }
+  #endif
 }
 
 // Switch to scheduler.  Must hold only p->lock

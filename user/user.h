@@ -29,6 +29,8 @@ int sleep(int);
 int uptime(void);
 int sysinfo(int);
 int procinfo(struct pinfo *); // Lab 1 procinfo
+int sched_tickets(int);
+int sched_statistics(void);
 
 // ulib.c
 int stat(const char*, struct stat*);
