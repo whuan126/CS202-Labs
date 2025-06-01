@@ -96,7 +96,7 @@ myproc(void)
 }
 
 int
-allocpid()
+setpid()
 {
   int pid;
   
@@ -110,13 +110,13 @@ allocpid()
 
 //function to create a trapframe for each thread
 int
-alloctid(){
+settid(){
   int thread_id;
-  acquire(&tid_lock);     //acquire the lock
-  thread_id = nexttid;          //assign thread_id as nexttid
-  nexttid = nexttid + 1;  //incremnet nexttid
-  release(&tid_lock);     //release the lock
-  return thread_id;             //return thread_id to parent
+  acquire(&tid_lock);
+  thread_id = nexttid;          
+  nexttid = nexttid + 1;  
+  release(&tid_lock);     
+  return thread_id;        
 }
 
 // Look in the process table for an UNUSED proc.
@@ -139,7 +139,7 @@ allocproc(void)
   return 0;
 
 found:
-  p->pid = allocpid();
+  p->pid = setpid();
   p->state = USED;
   p->thread_id = 0;                   
 
@@ -187,9 +187,9 @@ allocproc_thread(void)
   return 0;
 
   found:
-  p->pid = allocpid();
+  p->pid = setpid();
   p->state = USED;
-  p->thread_id = alloctid();    //allocate thread_id of a thread
+  p->thread_id = settid();    //allocate thread_id of a thread
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0)
   {
@@ -212,18 +212,36 @@ allocproc_thread(void)
 static void
 freeproc(struct proc *p)
 {
-  if(p->trapframe)
+  if (p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  //if(p->pagetable)
-  if(p->thread_id != 0 && p->pagetable!=0){   //deallocating child's resources if thread_id!=0
-    uvmunmap(p->pagetable, TRAPFRAME - PGSIZE *(p->thread_id), 1, 0);
-  }
-  else if(p->pagetable != 0)
-  {
+
+  if (p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
-  }
   p->pagetable = 0;
+
+  p->sz = 0;
+  p->pid = 0;
+  p->thread_id = 0;
+  p->parent = 0;
+  p->name[0] = 0;
+  p->chan = 0;
+  p->killed = 0;
+  p->xstate = 0;
+  p->state = UNUSED;
+}
+
+static void
+freethread(struct proc *p)
+{
+  if (p->trapframe)
+    kfree((void*)p->trapframe);
+  p->trapframe = 0;
+
+  if (p->pagetable)
+    uvmunmap(p->pagetable, TRAPFRAME - PGSIZE * p->thread_id, 1, 0);
+  p->pagetable = 0;
+
   p->sz = 0;
   p->pid = 0;
   p->thread_id = 0;
@@ -396,8 +414,7 @@ clone(void *stack)
   int i, thread_id;
   struct proc *np;
   struct proc *p = myproc();
-  int size = 4096*sizeof(void);
-  if(stack == NULL)   // checking if stack is null or not
+  if(stack == NULL)
   {
     return -1;
   }
@@ -421,7 +438,7 @@ clone(void *stack)
 
   *(np->trapframe) = *(p->trapframe);
 
-  np->trapframe->sp = (uint64)(stack + size);
+  np->trapframe->sp = (uint64)(stack + PGSIZE);
 
   np->trapframe->a0 = 0;
 
@@ -555,7 +572,11 @@ wait(uint64 addr)
             release(&wait_lock);
             return -1;
           }
-          freeproc(pp);
+          if (pp->thread_id > 0)
+            freethread(pp);
+          else
+            freeproc(pp);
+
           release(&pp->lock);
           release(&wait_lock);
           return pid;
