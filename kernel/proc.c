@@ -5,6 +5,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "stdint.h"
+#include "stddef.h"
 
 struct cpu cpus[NCPU];
 
@@ -13,7 +15,10 @@ struct proc proc[NPROC];
 struct proc *initproc;
 
 int nextpid = 1;
+int nexttid = 1;           //nexttid for thread
+
 struct spinlock pid_lock;
+struct spinlock tid_lock;   //struct for threads
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
@@ -51,6 +56,7 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  initlock(&tid_lock, "nexttid");         //tid init
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
@@ -102,6 +108,17 @@ allocpid()
   return pid;
 }
 
+//function to create a trapframe for each thread
+int
+alloctid(){
+  int thread_id;
+  acquire(&tid_lock);     //acquire the lock
+  thread_id = nexttid;          //assign thread_id as nexttid
+  nexttid = nexttid + 1;  //incremnet nexttid
+  release(&tid_lock);     //release the lock
+  return thread_id;             //return thread_id to parent
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -124,6 +141,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->thread_id = 0;                   
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -149,6 +167,45 @@ found:
   return p;
 }
 
+// Look in the process table for an UNUSED proc.
+// If found, initialize state required to run in the kernel,
+// and return with p->lock held.
+// If there are no free procs, or a memory allocation fails, return 0.
+static struct proc*
+allocproc_thread(void)
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == UNUSED) {
+      goto found;
+    } else {
+      release(&p->lock);
+    }
+  }
+  return 0;
+
+  found:
+  p->pid = allocpid();
+  p->state = USED;
+  p->thread_id = alloctid();    //allocate thread_id of a thread
+  // Allocate a trapframe page.
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0)
+  {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // Set up new context to start executing at forkret,
+  // which returns to user space.
+  memset(&p->context, 0, sizeof(p->context));
+  p->context.ra = (uint64)forkret;
+  p->context.sp = p->kstack + PGSIZE;
+
+  return p;
+}
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
@@ -158,11 +215,18 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
+  //if(p->pagetable)
+  if(p->thread_id != 0 && p->pagetable!=0){   //deallocating child's resources if thread_id!=0
+    uvmunmap(p->pagetable, TRAPFRAME - PGSIZE *(p->thread_id), 1, 0);
+  }
+  else if(p->pagetable != 0)
+  {
     proc_freepagetable(p->pagetable, p->sz);
+  }
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
+  p->thread_id = 0;
   p->parent = 0;
   p->name[0] = 0;
   p->chan = 0;
@@ -325,6 +389,65 @@ fork(void)
   return pid;
 }
 
+//function to implement clone
+int
+clone(void *stack)
+{
+  int i, thread_id;
+  struct proc *np;
+  struct proc *p = myproc();
+  int size = 4096*sizeof(void);
+  if(stack == NULL)   // checking if stack is null or not
+  {
+    return -1;
+  }
+
+  if((np = allocproc_thread()) == 0)
+  {
+    return -1;
+  }
+  
+  np->pagetable = p->pagetable;   //copying pagetable of parent
+
+  //
+  if (mappages(np->pagetable, TRAPFRAME - (PGSIZE * np->thread_id), PGSIZE, (uint64)(np->trapframe), PTE_R | PTE_W) < 0)
+  {
+    uvmunmap(np->pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(np->pagetable, 0);
+    return 0;
+  }
+
+  np->sz = p->sz;
+
+  *(np->trapframe) = *(p->trapframe);
+
+  np->trapframe->sp = (uint64)(stack + size);
+
+  np->trapframe->a0 = 0;
+
+  for(i=0; i<NOFILE; i++)
+  {
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+    np->cwd = idup(p->cwd);
+  }
+  safestrcpy(np->name, p->name, sizeof(p->name));
+
+  thread_id = np->thread_id;
+
+  release(&np->lock);  //releasing the lock   
+
+  acquire(&wait_lock); //acquiring the lock
+  np->parent = p;
+  release(&wait_lock);  //releasing the lock
+
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+
+  return thread_id;
+}
+
 // Pass p's abandoned children to init.
 // Caller must hold wait_lock.
 void
@@ -352,11 +475,24 @@ exit(int status)
     panic("init exiting");
 
   // Close all open files.
-  for(int fd = 0; fd < NOFILE; fd++){
-    if(p->ofile[fd]){
-      struct file *f = p->ofile[fd];
-      fileclose(f);
-      p->ofile[fd] = 0;
+  // for(int fd = 0; fd < NOFILE; fd++){
+  //   if(p->ofile[fd]){
+  //     struct file *f = p->ofile[fd];
+  //     fileclose(f);
+  //     p->ofile[fd] = 0;
+  //   }
+  // }
+
+  //if thread_id is 0 then we close the files but for threads we don't close
+  if(p->thread_id == 0){
+    for(int fd = 0; fd<NOFILE; fd++)
+    {
+      if(p->ofile[fd])
+      {
+        struct file *f = p->ofile[fd];
+        fileclose(f);
+        p->ofile[fd] = 0;    
+      }
     }
   }
 
@@ -368,7 +504,12 @@ exit(int status)
   acquire(&wait_lock);
 
   // Give any children to init.
-  reparent(p);
+  //reparent(p);
+
+  if(p->thread_id == 0)
+  {
+    reparent(p);
+  }
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
@@ -434,13 +575,6 @@ wait(uint64 addr)
   }
 }
 
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
 void
 scheduler(void)
 {
